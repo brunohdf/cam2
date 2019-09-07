@@ -1,6 +1,7 @@
 package com.brx.camera2
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -17,12 +18,14 @@ import android.view.TextureView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import com.tbruyelle.rxpermissions2.RxPermissions
 import kotlinx.android.synthetic.main.activity_main.*
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
+
 
 class MainActivity : AppCompatActivity() {
 
@@ -39,19 +42,22 @@ class MainActivity : AppCompatActivity() {
     private var backgroundHandler: Handler? = null
     private var backgroundThread: HandlerThread? = null
     private var cameraFacing: Int = -1
-    private var CAMERA_REQUEST_CODE: Int = 999
+    private val rxPermissions = RxPermissions(this)
 
+    @SuppressLint("CheckResult")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
-        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE), CAMERA_REQUEST_CODE)
 
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         cameraFacing = CameraCharacteristics.LENS_FACING_BACK
 
         surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
+            override fun onSurfaceTextureAvailable(
+                surfaceTexture: SurfaceTexture,
+                width: Int,
+                height: Int
+            ) {
                 setUpCamera()
                 openCamera()
             }
@@ -60,10 +66,19 @@ class MainActivity : AppCompatActivity() {
                 return false
             }
 
-            override fun onSurfaceTextureSizeChanged(surfaceTexture: SurfaceTexture, width: Int, height: Int) = Unit
+            override fun onSurfaceTextureSizeChanged(
+                surfaceTexture: SurfaceTexture,
+                width: Int,
+                height: Int
+            ) = Unit
 
-            override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture)  = Unit
+            override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) = Unit
         }
+
+        rxPermissions.request(Manifest.permission.CAMERA)
+            .subscribe { granted ->
+                if (!granted) finish()
+            }
     }
 
     override fun onResume() {
@@ -77,10 +92,38 @@ class MainActivity : AppCompatActivity() {
             texture_view.surfaceTextureListener = surfaceTextureListener
         }
 
-        createImageGallery()
         fab_take_photo.setOnClickListener {
-            onTakePhotoButtonClicked()
-            Toast.makeText(this, "take pic", Toast.LENGTH_SHORT).show()
+
+            rxPermissions
+                .requestEach(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.READ_PHONE_STATE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                )
+                .subscribe { permission ->
+                    if (permission.granted) {
+
+                        if (permission.name == Manifest.permission.WRITE_EXTERNAL_STORAGE) {
+                            createImageGallery()
+                            onTakePhotoButtonClicked()
+                        }
+                    } else if (permission.shouldShowRequestPermissionRationale) {
+                        Toast.makeText(
+                            this,
+                            "${permission.name} denied permission without ask never again",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        //
+                    } else {
+                        Toast.makeText(
+                            this,
+                            "${permission.name} denied permission with ask never again",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        // Need to go to the settings
+                    }
+                }
         }
     }
 
@@ -88,18 +131,6 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
         closeCamera()
         closeBackgroundThread()
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-
-        if (requestCode == CAMERA_REQUEST_CODE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                createImageGallery()
-            } else {
-                Toast.makeText(this, "Permission Denied!", Toast.LENGTH_SHORT).show()
-            }
-        }
     }
 
     private fun onTakePhotoButtonClicked() {
@@ -174,7 +205,8 @@ class MainActivity : AppCompatActivity() {
                     val streamConfigurationMap = cameraCharacteristics.get(
                         CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
                     )
-                    previewSize = streamConfigurationMap!!.getOutputSizes(SurfaceTexture::class.java)[0]
+                    previewSize =
+                        streamConfigurationMap!!.getOutputSizes(SurfaceTexture::class.java)[0]
                     this.cameraId = cameraId
                 }
             }
@@ -186,7 +218,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun openCamera() {
         try {
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.CAMERA
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
                 cameraManager.openCamera(cameraId, stateCallback, backgroundHandler)
             }
         } catch (e: CameraAccessException) {
@@ -216,7 +252,8 @@ class MainActivity : AppCompatActivity() {
             val surfaceTexture = texture_view.surfaceTexture
             surfaceTexture.setDefaultBufferSize(texture_view.width, texture_view.height)
             val previewSurface = Surface(surfaceTexture)
-            captureRequestBuilder = cameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            captureRequestBuilder =
+                cameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
             captureRequestBuilder.addTarget(previewSurface)
 
             cameraDevice!!.createCaptureSession(
@@ -229,14 +266,19 @@ class MainActivity : AppCompatActivity() {
                         try {
                             captureRequest = captureRequestBuilder.build()
                             this@MainActivity.cameraCaptureSession = cameraCaptureSession
-                            this@MainActivity.cameraCaptureSession?.setRepeatingRequest(captureRequest, null, backgroundHandler)
+                            this@MainActivity.cameraCaptureSession?.setRepeatingRequest(
+                                captureRequest,
+                                null,
+                                backgroundHandler
+                            )
                         } catch (e: CameraAccessException) {
                             e.printStackTrace()
                         }
 
                     }
 
-                    override fun onConfigureFailed(cameraCaptureSession: CameraCaptureSession) = Unit
+                    override fun onConfigureFailed(cameraCaptureSession: CameraCaptureSession) =
+                        Unit
                 }, backgroundHandler
             )
         } catch (e: CameraAccessException) {
@@ -254,7 +296,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun createImageGallery() {
-        val storageDirectory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+        val storageDirectory =
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
         galleryFolder = File(storageDirectory, resources.getString(R.string.app_name))
         if (!galleryFolder.exists()) {
             val wasCreated = galleryFolder.mkdirs()
